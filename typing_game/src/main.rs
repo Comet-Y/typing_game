@@ -18,6 +18,7 @@ struct TypingState{
     inputbuf:String,
     tries:Vec<TrieTree>,
     odai_kana:Vec<Vec<String>>,
+    odai:Vec<String>,
     product:Vec<Vec<usize>>,
     problem_index:usize,
     kana_index: usize,
@@ -39,6 +40,8 @@ struct JapaneseFont(Handle<Font>);
 struct InputText;
 
 #[derive(Component)]
+struct TargetText;
+#[derive(Component)]
 struct KanaSpan(usize);
 
 #[derive(Resource,PartialEq)]
@@ -47,7 +50,7 @@ struct NOk(bool);
 #[derive(Resource)]
 struct TextParentEntity(Entity);
 #[derive(Resource)]
-struct TargetTextEntity(Entity);
+struct TargetTextKanaEntity(Entity);
 
 #[derive(Message)]
 struct ProblemChanged;
@@ -107,6 +110,7 @@ impl TypingState{
             inputbuf:String::new(),
             tries:Vec::new(),
             odai_kana:Vec::new(),
+            odai:Vec::new(),
             product:Vec::new(),
             problem_index:0,
             kana_index:0,
@@ -314,7 +318,7 @@ fn setup(
 ){
     commands.insert_resource(JapaneseFont(asset_server.load("fonts/NotoSansJP-VariableFont_wght.ttf")));
     commands.spawn(Camera2d);
-    let parent=commands.spawn(Node{
+    commands.spawn(Node{
         width:Val::Percent(100.0),
         height:Val::Percent(100.0),
         justify_content:JustifyContent::Center,
@@ -322,8 +326,7 @@ fn setup(
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(20.0),
         ..default()
-    }).id();
-    commands.insert_resource(TextParentEntity(parent));
+    });
     next_state.set(GameState::MainMenu);
 }
 
@@ -361,23 +364,32 @@ fn game_setup(
     mut msg_problem_changed:MessageWriter<ProblemChanged>
 ){  
 
-
-    let target=commands.spawn(
+    commands.spawn(
+        (
+            Text::new(""),
+            DespawnOnExit(GameState::InGame),
+            TargetText
+        )
+    );
+    let target_kana=commands.spawn(
         (
             Text::new(""),
             DespawnOnExit(GameState::InGame))).id();
-    commands.entity(parent.0).add_child(target);
-    commands.insert_resource(TargetTextEntity(target));
+    commands.entity(parent.0).add_child(target_kana);
+    commands.insert_resource(TargetTextKanaEntity(target_kana));
     msg_problem_changed.write(ProblemChanged);
-
-    let input=commands.spawn((Text::new(""),
+    
+    let input=commands.spawn((
+        Text::new(""),
         InputText,
         DespawnOnExit(GameState::InGame),
         TextFont{
             font:japanese_font.0.clone().into(),
             font_size:FontSize::Px(50.0),
             ..default()
-        })).id();    
+        }
+    )
+).id();    
     commands.entity(parent.0).add_child(input);
     let correct=asset_server.load("sounds/correct.mp3");
     let miss=asset_server.load("sounds/miss.mp3");
@@ -386,9 +398,9 @@ fn game_setup(
 
 fn change_ui(
     typingstate:Res<TypingState>,
-    mut target:Query<(&mut TextColor,&KanaSpan),Without<InputText>>,
+    mut target_kana:Query<(&mut TextColor,&KanaSpan),Without<InputText>>,
     mut input:Query<&mut Text,(With<InputText>,Without<KanaSpan>)>){
-        target.iter_mut().for_each(|(mut color,span)|{
+        target_kana.iter_mut().for_each(|(mut color,span)|{
             if span.0<typingstate.kana_index{
                 color.0=Color::srgb(0.5,0.5,0.5);
             }
@@ -401,13 +413,17 @@ fn change_ui(
 fn change_problem(
     mut msgs:MessageReader<ProblemChanged>,
     mut commands:Commands,
-    target:ResMut<TargetTextEntity>,
+    target_kana:ResMut<TargetTextKanaEntity>,
     mut typingstate:ResMut<TypingState>,
-    japanese_font:Res<JapaneseFont>
+    japanese_font:Res<JapaneseFont>,
+    mut target:Query<&mut Text,(With<TargetText>,Without<KanaSpan>,Without<InputText>)>
 ){
 
     for _ in msgs.read(){
-        commands.entity(target.0).despawn_children();
+        if let Ok(mut text)=target.single_mut(){
+            *text=Text::new(typingstate.odai[typingstate.problem_index].clone());
+        }
+        commands.entity(target_kana.0).despawn_children();
         typingstate.inputbuf=String::new();
         for (i,s) in typingstate.odai_kana[typingstate.problem_index].iter().enumerate(){
             let child=commands.spawn((
@@ -423,7 +439,7 @@ fn change_problem(
             )
 
             ).id();
-            commands.entity(target.0).add_child(child);
+            commands.entity(target_kana.0).add_child(child);
         }
     }
 }
