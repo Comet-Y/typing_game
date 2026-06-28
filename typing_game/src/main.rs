@@ -1,5 +1,6 @@
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::time::Stopwatch;
 use bevy::prelude::*;
 #[derive(Clone, Debug, Default)]
 struct TrieTree {
@@ -19,6 +20,7 @@ struct TypingState {
     problem_index: usize,
     problem_count: usize,
     problems: Vec<ProblemState>,
+    kpm_data:KpmData,
 }
 
 struct ProblemState {
@@ -29,15 +31,15 @@ struct ProblemState {
     kana_index: usize,
     node_index: usize,
 }
-
+struct KpmData{
+    last_inputbuf_len:usize,
+    typed_sum:usize,
+}
 #[derive(Resource, Clone)]
-struct SoundAssets {
+struct Sounds {
     correct: Handle<AudioSource>,
     miss: Handle<AudioSource>,
 }
-
-#[derive(Resource, Clone)]
-struct JapaneseFont(Handle<Font>);
 
 #[derive(Component)]
 struct InputText;
@@ -58,19 +60,44 @@ struct NOk(bool);
 struct TextParentEntity(Entity);
 #[derive(Resource)]
 struct TargetTextKanaEntity(Entity);
+#[derive(Resource,Debug)]
+struct Wait(Timer);
 
+#[derive(Resource,Default)]
+struct GameTimer{
+    stopwatch:Stopwatch,
+    prev:f32
+}
+#[derive(Resource)]
+struct TextFontPreset(TextFont);
 #[derive(Message)]
 struct ProblemChanged;
+
+#[derive(Message)]
+struct DisplayKpm;
 
 #[derive(States, Clone, Debug, Hash, Eq, PartialEq, Default)]
 #[states(scoped_entities)]
 enum GameState {
     #[default]
     Start,
-
     MainMenu,
     InGame,
     EndMenu,
+}
+impl Sounds{
+    fn correct(&self,commands:&mut Commands){
+         commands.spawn((
+            AudioPlayer::new(self.correct.clone()),
+            PlaybackSettings::DESPAWN
+        ));
+    }
+    fn miss(&self, commands:&mut Commands){
+        commands.spawn((
+            AudioPlayer::new(self.miss.clone()),
+            PlaybackSettings::DESPAWN,
+        ));
+    }
 }
 impl TrieTree {
     fn new() -> Self {
@@ -130,6 +157,7 @@ impl TypingState {
             problem_index: 0,
             problem_count: n,
             problems: Vec::new(),
+            kpm_data:KpmData::new()
         }
     }
     fn advance(&mut self, c: char, nok: &mut NOk) -> std::result::Result<(), ()> {
@@ -155,22 +183,41 @@ impl TypingState {
     fn is_n(&self) -> bool {
         self.tries[self.now_trie()].trie[self.now_node()].is_n
     }
+    fn will_out_of_range(&self)->bool{
+        self.problem_index>=self.problem_count
+    }
     fn now_kana(&self) -> usize {
+        if self.will_out_of_range(){
+            return 0;
+        }
         self.problems[self.problem_index].now_kana()
     }
     fn now_trie(&self) -> usize {
+        if self.will_out_of_range(){
+            return 0;
+        }
         self.problems[self.problem_index].now_trie()
     }
     fn now_node(&self) -> usize {
+        if self.will_out_of_range(){
+            return 0;
+        }
         self.problems[self.problem_index].now_node()
     }
+
     fn now_odai(&self) -> &str {
+        if self.will_out_of_range(){
+            return "";
+        }
         self.problems[self.problem_index].now_odai()
     }
     fn now_odai_kana(&self) -> &Vec<String> {
         self.problems[self.problem_index].now_odai_kana()
     }
     fn now_inputbuf(&self) -> &str {
+        if self.will_out_of_range(){
+            return "";
+        }
         self.problems[self.problem_index].now_inputbuf()
     }
     fn next_node(&self, c: &char) -> Option<&usize> {
@@ -179,11 +226,15 @@ impl TypingState {
             .get(c)
     }
     fn goto_next_problem(&mut self) {
+
+        self.kpm_data.last_inputbuf_len=self.now_inputbuf().len();
+        self.kpm_data.accumulate();
         self.problems[self.problem_index].initialize();
         self.problem_index += 1;
     }
 
     fn initialize(&mut self) {
+        self.kpm_data.initialize();
         self.problem_index = 0;
     }
     fn advance_node(&mut self, next: usize) {
@@ -197,6 +248,12 @@ impl TypingState {
     }
     fn add_inputbuf(&mut self, c: char) {
         self.problems[self.problem_index].inputbuf.push(c);
+    }
+    fn last_inputbuf_len(&self)->usize{
+        self.kpm_data.last_inputbuf_len
+    }
+    fn typed_sum(&self)->usize{
+        self.kpm_data.typed_sum
     }
 }
 impl ProblemState {
@@ -237,6 +294,36 @@ impl ProblemState {
     }
     fn cleared(&self) -> bool {
         self.kana_index == self.product.len()
+    }
+}
+
+impl KpmData{
+    fn new()->Self{
+        Self{
+            last_inputbuf_len:0,
+            typed_sum:0,
+        }
+    }
+    fn initialize(&mut self){
+        (self.last_inputbuf_len,self.typed_sum)=(0,0);
+    }
+    fn accumulate(&mut self){
+        self.typed_sum+=self.last_inputbuf_len;
+    }
+}
+impl GameTimer{
+    fn duration(&self)->f32{
+        self.stopwatch.elapsed_secs()-self.prev
+    }
+    fn setprev(&mut self){
+        self.prev=self.stopwatch.elapsed_secs();
+    }
+    fn reset(&mut self){
+        self.prev=0.0;
+        self.stopwatch.reset()
+    }
+    fn time(&self)->f32{
+        self.stopwatch.elapsed_secs()
     }
 }
 fn initialize() -> (Vec<TrieTree>, std::collections::HashMap<String, usize>) {
@@ -497,16 +584,19 @@ fn main() {
         .add_systems(OnEnter(GameState::InGame), game_setup)
         .add_systems(
             FixedUpdate,
-            (change_problem, change_ui, handle_key)
+            (change_odai,change_odai_kana,change_problem_index_display, change_ui, handle_key,erase_ui,display_kpm)
                 .chain()
-                .run_if(in_state(GameState::InGame)),
+                .run_if(in_state(GameState::InGame).and_then(can_continue)
+                ).after(update_wait)
         )
         .add_systems(OnEnter(GameState::EndMenu), start_endmenu)
         .add_systems(
             FixedUpdate,
             return_to_mainmenu.run_if(in_state(GameState::EndMenu)),
         )
+        .add_systems(FixedUpdate,update_wait.run_if(in_state(GameState::InGame)))
         .add_message::<ProblemChanged>()
+        .add_message::<DisplayKpm>()
         .run();
 }
 fn setup(
@@ -514,9 +604,18 @@ fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
 ) {
-    commands.insert_resource(JapaneseFont(
-        asset_server.load("fonts/NotoSansJP-VariableFont_wght.ttf"),
-    ));
+    
+    commands.insert_resource(Wait(Timer::from_seconds(1.0,TimerMode::Once)));
+    commands.insert_resource(GameTimer{
+        stopwatch:Stopwatch::new(),
+        prev:0.0
+    });
+    let japanese_font=asset_server.load("fonts/NotoSansJP-VariableFont_wght.ttf");
+    commands.insert_resource(TextFontPreset(TextFont{
+            font: japanese_font.clone().into(),
+                font_size: FontSize::Px(50.0),
+                ..default()
+    }));
     commands.spawn(Camera2d);
     let parent = commands
         .spawn(Node {
@@ -564,18 +663,18 @@ fn start_game(
 fn game_setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    japanese_font: Res<JapaneseFont>,
     parent: Res<TextParentEntity>,
-    mut msg_problem_changed: MessageWriter<ProblemChanged>,
+    mut game_timer:ResMut<GameTimer>,
+    mut wait:ResMut<Wait>,
+    text_font_preset:Res<TextFontPreset>,
 ) {
+    wait.0.reset();
+    wait.0.unpause();
+    game_timer.reset();
     commands.spawn((
         Text::new(""),
         DespawnOnExit(GameState::InGame),
-        TextFont {
-            font: japanese_font.0.clone().into(),
-            font_size: FontSize::Px(20.0),
-            ..default()
-        },
+        text_font_preset.0.clone(),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(10.0),
@@ -589,11 +688,7 @@ fn game_setup(
             Text::new(""),
             DespawnOnExit(GameState::InGame),
             TargetText,
-            TextFont {
-                font: japanese_font.0.clone().into(),
-                font_size: FontSize::Px(50.0),
-                ..default()
-            },
+            text_font_preset.0.clone(),
         ))
         .id();
     commands.entity(parent.0).add_child(target_text);
@@ -602,30 +697,42 @@ fn game_setup(
         .id();
     commands.entity(parent.0).add_child(target_kana);
     commands.insert_resource(TargetTextKanaEntity(target_kana));
-    msg_problem_changed.write(ProblemChanged);
-
     let input = commands
         .spawn((
             Text::new(""),
             InputText,
             DespawnOnExit(GameState::InGame),
-            TextFont {
-                font: japanese_font.0.clone().into(),
-                font_size: FontSize::Px(50.0),
-                ..default()
-            },
+            text_font_preset.0.clone(),
         ))
         .id();
     commands.entity(parent.0).add_child(input);
     let correct = asset_server.load("sounds/correct.mp3");
     let miss = asset_server.load("sounds/miss.mp3");
-    commands.insert_resource(SoundAssets { correct, miss });
+    commands.insert_resource(Sounds { correct, miss });
 }
 
+fn update_wait(
+    time:Res<Time>,
+    mut wait:ResMut<Wait>,
+    mut game_timer:ResMut<GameTimer>
+){
+    wait.0.tick(time.delta());
+    game_timer.stopwatch.tick(time.delta());
+}
 fn change_ui(
     typingstate: Res<TypingState>,
-    mut target_kana: Query<(&mut TextColor, &KanaSpan), Without<InputText>>,
-    mut input: Query<&mut Text, (With<InputText>, Without<KanaSpan>)>,
+    mut target_kana: Query<
+        (&mut TextColor, &KanaSpan),
+        (Without<InputText>, Without<ProblemIndexDisplay>),
+    >,
+    mut input: Query<
+        &mut Text,
+        (
+            With<InputText>,
+            Without<KanaSpan>,
+            Without<ProblemIndexDisplay>,
+        ),
+    >,
 ) {
     target_kana.iter_mut().for_each(|(mut color, span)| {
         if span.0 < typingstate.now_kana() {
@@ -637,44 +744,82 @@ fn change_ui(
     }
 }
 
-fn change_problem(
+fn display_kpm(
+    mut msgs:MessageReader<DisplayKpm>,
+    mut game_timer:ResMut<GameTimer>,
+    typingstate:Res<TypingState>,
+    mut target:Query<&mut Text,With<TargetText>>,
+    mut wait:ResMut<Wait>,
+){
+    for _ in msgs.read(){
+    game_timer.stopwatch.pause();
+    let kpm=60.0*typingstate.last_inputbuf_len() as f32/(game_timer.duration());
+    if let Ok(mut text)=target.single_mut(){
+        *text=Text::new(format!("{}  kpm",kpm.to_string()));
+    }
+    game_timer.setprev();
+    wait.0.reset();
+    wait.0.unpause();
+}
+}
+
+fn erase_ui(
+    mut msgs:MessageReader<DisplayKpm>,
+    mut commands:Commands,
+     target_kana:ResMut<TargetTextKanaEntity>,
+     mut input:Query<&mut Text,With<InputText>>,
+){  
+    for _ in msgs.read(){
+    commands.entity(target_kana.0).despawn_children();
+    commands.entity(target_kana.0).insert(Text::new(""));
+    if let Ok(mut text)=input.single_mut(){
+        *text=Text::new("");
+    }
+}
+}
+fn can_continue(
+    wait:Res<Wait>,
+)->bool{
+    wait.0.is_finished()
+}
+fn change_odai(
+    mut msgs:MessageReader<ProblemChanged>,
+    typingstate:Res<TypingState>,
+    mut target:Query<&mut Text,(With<TargetText>,Without<KanaSpan>,Without<InputText>)>
+){
+    for _ in msgs.read(){
+        if let Ok(mut text)=target.single_mut(){
+            *text=Text::new(typingstate.now_odai());
+        }
+    }
+}
+
+fn change_problem_index_display(
+    mut msgs:MessageReader<ProblemChanged>,
+    typingstate:Res<TypingState>,
+    mut problem_index_display:Query<&mut Text,(With<ProblemIndexDisplay>,Without<KanaSpan>,Without<InputText>)>
+){
+    for _ in msgs.read(){
+        if let Ok(mut text)=problem_index_display.single_mut(){
+            *text=Text::new(format!("{}/{}",typingstate.problem_index+1,typingstate.problem_count));
+        }
+    }
+}
+
+fn change_odai_kana(
     mut msgs: MessageReader<ProblemChanged>,
     mut commands: Commands,
     target_kana: ResMut<TargetTextKanaEntity>,
     typingstate: Res<TypingState>,
-    japanese_font: Res<JapaneseFont>,
-    mut target: Query<&mut Text, (With<TargetText>, Without<KanaSpan>, Without<InputText>)>,
-    mut problem_index_display: Query<
-        &mut Text,
-        (
-            With<ProblemIndexDisplay>,
-            Without<InputText>,
-            Without<KanaSpan>,
-        ),
-    >,
+    text_font_preset:Res<TextFontPreset>
 ) {
     for _ in msgs.read() {
-        if let Ok(mut text) = target.single_mut() {
-            *text = Text::new(typingstate.now_odai());
-        }
-        if let Ok(mut text) = problem_index_display.single_mut() {
-            *text = Text::new(format!(
-                "{}/{}",
-                typingstate.problem_index + 1,
-                typingstate.problem_count
-            ));
-        }
-        commands.entity(target_kana.0).despawn_children();
         for (i, s) in typingstate.now_odai_kana().iter().enumerate() {
             let child = commands
                 .spawn((
                     TextSpan::new(s.clone()),
                     DespawnOnExit(GameState::InGame),
-                    TextFont {
-                        font: japanese_font.0.clone().into(),
-                        font_size: FontSize::Px(50.0),
-                        ..default()
-                    },
+                    text_font_preset.0.clone(),
                     TextColor(Color::WHITE),
                     KanaSpan(i),
                 ))
@@ -685,14 +830,26 @@ fn change_problem(
 }
 
 fn handle_key(
-    sounds: Res<SoundAssets>,
+    sounds: Res<Sounds>,
     mut commands: Commands,
     mut msg_kbd: MessageReader<KeyboardInput>,
     mut typingstate: ResMut<TypingState>,
     mut nok: ResMut<NOk>,
     mut msg_problem_changed: MessageWriter<ProblemChanged>,
+    mut msg_display_wpm:MessageWriter<DisplayKpm>,
     mut next_state: ResMut<NextState<GameState>>,
+    mut game_timer:ResMut<GameTimer>,
+    wait:ResMut<Wait>
 ) {
+    if wait.0.just_finished(){
+        msg_problem_changed.write(ProblemChanged);
+    }
+    
+    if typingstate.cleared() {
+        next_state.set(GameState::EndMenu);
+        return;
+    }
+    game_timer.stopwatch.unpause();
     for msg in msg_kbd.read() {
         if msg.state == ButtonState::Released {
             continue;
@@ -702,41 +859,42 @@ fn handle_key(
         }
         if let Key::Character(input) = &msg.logical_key {
             for c in input.chars() {
-                println!("{:?}", typingstate.problems[typingstate.problem_index]);
                 match typingstate.advance(c, &mut nok) {
                     Ok(()) => {
-                        commands.spawn((
-                            AudioPlayer::new(sounds.correct.clone()),
-                            PlaybackSettings::DESPAWN,
-                        ));
+                        sounds.correct(&mut commands);
                         typingstate.add_inputbuf(c);
-                        println!("correct");
                     }
                     Err(()) => {
-                        commands.spawn((
-                            AudioPlayer::new(sounds.miss.clone()),
-                            PlaybackSettings::DESPAWN,
-                        ));
-                        println!("wrong");
+                        sounds.miss(&mut commands);
                     }
                 }
                 if typingstate.one_problem_cleared() {
                     typingstate.goto_next_problem();
-                    msg_problem_changed.write(ProblemChanged);
-                    if typingstate.cleared() {
-                        next_state.set(GameState::EndMenu);
-                    }
+                    msg_display_wpm.write(DisplayKpm);
+
                 }
-                println!("{:?}", typingstate);
             }
         }
     }
 }
 
-fn start_endmenu(mut commands: Commands, parent: Res<TextParentEntity>) {
+fn start_endmenu(
+    mut commands: Commands,
+    parent: Res<TextParentEntity>,
+    typingstate:Res<TypingState>,
+    game_timer:Res<GameTimer>,
+    ) {
+
+    let kpm=commands.spawn((
+        Text::new(format!("{}  kpm",(60.0*typingstate.typed_sum() as f32/game_timer.time()).to_string())),
+        DespawnOnExit(GameState::EndMenu),
+    )
+    ).id();
+
     let clear = commands
         .spawn((Text::new("CLEAR!"), DespawnOnExit(GameState::EndMenu)))
         .id();
+    commands.entity(parent.0).add_child(kpm);
     commands.entity(parent.0).add_child(clear);
 }
 fn return_to_mainmenu(
