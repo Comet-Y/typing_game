@@ -110,6 +110,15 @@ impl std::fmt::Debug for TypingState {
     }
 }
 
+impl std::fmt::Debug for ProblemState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "kana_index:{}\nnode_index:{}",
+            &self.kana_index, &self.node_index,
+        )
+    }
+}
 impl TypingState {
     fn new(n: usize) -> Self {
         TypingState {
@@ -124,7 +133,7 @@ impl TypingState {
             self.advance_node(*next);
             if self.is_end_node() {
                 *nok = NOk(self.is_n());
-                self.problems[self.problem_index].adavance();
+                self.problems[self.problem_index].advance();
             }
             Ok(())
         } else if c == 'n' && *nok == NOk(true) {
@@ -142,19 +151,22 @@ impl TypingState {
     fn is_n(&self) -> bool {
         self.tries[self.now_trie()].trie[self.now_node()].is_n
     }
+    fn now_kana(&self)->usize{
+        self.problems[self.problem_index].now_kana()
+    }
     fn now_trie(&self) -> usize {
-        self.problems[self.problem_index].now_node()
+        self.problems[self.problem_index].now_trie()
     }
     fn now_node(&self) -> usize {
         self.problems[self.problem_index].now_node()
     }
-    fn now_odai(&self) -> String {
+    fn now_odai(&self) -> &str {
         self.problems[self.problem_index].now_odai()
     }
-    fn now_odai_kana(&self) -> Vec<String> {
+    fn now_odai_kana(&self) -> &Vec<String> {
         self.problems[self.problem_index].now_odai_kana()
     }
-    fn now_inputbuf(&self) -> String {
+    fn now_inputbuf(&self) -> &str {
         self.problems[self.problem_index].now_inputbuf()
     }
     fn next_node(&self, c: &char) -> Option<&usize> {
@@ -169,7 +181,6 @@ impl TypingState {
 
     fn initialize(&mut self) {
         self.problem_index = 0;
-        self.problems[self.problem_count].initialize();
     }
     fn advance_node(&mut self, next: usize) {
         self.problems[self.problem_index].node_index = next;
@@ -185,7 +196,7 @@ impl TypingState {
     }
 }
 impl ProblemState {
-    fn new(&mut self, odai: String, odai_kana: Vec<String>, product: Vec<usize>) -> Self {
+    fn new(odai: String, odai_kana: Vec<String>, product: Vec<usize>) -> Self {
         Self {
             odai,
             odai_kana,
@@ -195,20 +206,23 @@ impl ProblemState {
             node_index: 0,
         }
     }
+    fn now_kana(&self)->usize{
+        self.kana_index
+    }
     fn now_trie(&self) -> usize {
         self.product[self.kana_index]
     }
     fn now_node(&self) -> usize {
         self.node_index
     }
-    fn now_odai(&self) -> String {
-        self.odai
+    fn now_odai(&self) -> &str {
+        &self.odai
     }
-    fn now_odai_kana(&self) -> Vec<String> {
-        self.odai_kana
+    fn now_odai_kana(&self) -> &Vec<String> {
+        &self.odai_kana
     }
-    fn now_inputbuf(&self) -> String {
-        self.inputbuf
+    fn now_inputbuf(&self) -> &str {
+        &self.inputbuf
     }
     fn initialize(&mut self) {
         (self.inputbuf, self.kana_index, self.node_index) = (String::new(), 0, 0);
@@ -455,13 +469,15 @@ fn main() {
     typingstate.tries = tries;
     for _ in 0..n {
         let mut odai = String::new();
-        let mut input = String::new();
-
-        std::io::stdin().read_line(&mut input).unwrap();
-        let (product, odai_kana) = build_product(&input, &indexes);
-        typingstate
-            .problems
-            .push(ProblemState.new(input, odai_kana, product));
+        let mut kana = String::new();
+        std::io::stdin().read_line(&mut odai).unwrap();
+        std::io::stdin().read_line(&mut kana).unwrap();
+        let (product, odai_kana) = build_product(&kana, &indexes);
+        typingstate.problems.push(ProblemState::new(
+            odai.trim().to_string(),
+            odai_kana,
+            product,
+        ));
     }
     App::new()
         .add_plugins(DefaultPlugins)
@@ -477,7 +493,7 @@ fn main() {
         .add_systems(OnEnter(GameState::InGame), game_setup)
         .add_systems(
             FixedUpdate,
-            (handle_key, change_ui, change_problem)
+            (change_problem,change_ui,handle_key)
                 .chain()
                 .run_if(in_state(GameState::InGame)),
         )
@@ -495,18 +511,21 @@ fn setup(
     asset_server: Res<AssetServer>,
 ) {
     commands.insert_resource(JapaneseFont(
-        asset_server.load("fonts/NotoSansJP-VariableFont_wght.:ttf"),
+        asset_server.load("fonts/NotoSansJP-VariableFont_wght.ttf"),
     ));
     commands.spawn(Camera2d);
-    commands.spawn(Node {
-        width: Val::Percent(100.0),
-        height: Val::Percent(100.0),
-        justify_content: JustifyContent::Center,
-        align_items: AlignItems::Center,
-        flex_direction: FlexDirection::Column,
-        row_gap: Val::Px(20.0),
-        ..default()
-    });
+    let parent = commands
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(20.0),
+            ..default()
+        })
+        .id();
+    commands.insert_resource(TextParentEntity(parent));
     next_state.set(GameState::MainMenu);
 }
 
@@ -545,7 +564,17 @@ fn game_setup(
     parent: Res<TextParentEntity>,
     mut msg_problem_changed: MessageWriter<ProblemChanged>,
 ) {
-    commands.spawn((Text::new(""), DespawnOnExit(GameState::InGame), TargetText));
+    let target_text = commands
+        .spawn((
+            Text::new(""), DespawnOnExit(GameState::InGame), TargetText,
+                TextFont {
+                font: japanese_font.0.clone().into(),
+                font_size: FontSize::Px(50.0),
+                ..default()
+            },)
+        )
+        .id();
+    commands.entity(parent.0).add_child(target_text);
     let target_kana = commands
         .spawn((Text::new(""), DespawnOnExit(GameState::InGame)))
         .id();
@@ -577,12 +606,12 @@ fn change_ui(
     mut input: Query<&mut Text, (With<InputText>, Without<KanaSpan>)>,
 ) {
     target_kana.iter_mut().for_each(|(mut color, span)| {
-        if span.0 < typingstate.now_trie() {
+        if span.0 < typingstate.now_kana() {
             color.0 = Color::srgb(0.5, 0.5, 0.5);
         }
     });
     if let Ok(mut text) = input.single_mut() {
-        *text = Text::new(typingstate.now_inputbuf().clone());
+        *text = Text::new(typingstate.now_inputbuf());
     }
 }
 
@@ -590,17 +619,17 @@ fn change_problem(
     mut msgs: MessageReader<ProblemChanged>,
     mut commands: Commands,
     target_kana: ResMut<TargetTextKanaEntity>,
-    mut typingstate: ResMut<TypingState>,
+    typingstate: Res<TypingState>,
     japanese_font: Res<JapaneseFont>,
     mut target: Query<&mut Text, (With<TargetText>, Without<KanaSpan>, Without<InputText>)>,
 ) {
     for _ in msgs.read() {
         if let Ok(mut text) = target.single_mut() {
-            *text = Text::new(typingstate.now_odai().clone());
+            *text = Text::new(typingstate.now_odai());
         }
         commands.entity(target_kana.0).despawn_children();
-        for (i, s) in typingstate.now_odai_kana()[typingstate.problem_index]
-            .chars()
+        for (i, s) in typingstate.now_odai_kana()
+            .iter()
             .enumerate()
         {
             let child = commands
@@ -639,6 +668,7 @@ fn handle_key(
         }
         if let Key::Character(input) = &msg.logical_key {
             for c in input.chars() {
+                println!("{:?}", typingstate.problems[typingstate.problem_index]);
                 match typingstate.advance(c, &mut nok) {
                     Ok(()) => {
                         commands.spawn((
