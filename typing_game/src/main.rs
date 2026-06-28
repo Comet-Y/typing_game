@@ -44,6 +44,10 @@ struct InputText;
 
 #[derive(Component)]
 struct TargetText;
+
+#[derive(Component)]
+struct ProblemIndexDisplay;
+
 #[derive(Component)]
 struct KanaSpan(usize);
 
@@ -151,7 +155,7 @@ impl TypingState {
     fn is_n(&self) -> bool {
         self.tries[self.now_trie()].trie[self.now_node()].is_n
     }
-    fn now_kana(&self)->usize{
+    fn now_kana(&self) -> usize {
         self.problems[self.problem_index].now_kana()
     }
     fn now_trie(&self) -> usize {
@@ -206,7 +210,7 @@ impl ProblemState {
             node_index: 0,
         }
     }
-    fn now_kana(&self)->usize{
+    fn now_kana(&self) -> usize {
         self.kana_index
     }
     fn now_trie(&self) -> usize {
@@ -493,7 +497,7 @@ fn main() {
         .add_systems(OnEnter(GameState::InGame), game_setup)
         .add_systems(
             FixedUpdate,
-            (change_problem,change_ui,handle_key)
+            (change_problem, change_ui, handle_key)
                 .chain()
                 .run_if(in_state(GameState::InGame)),
         )
@@ -564,15 +568,33 @@ fn game_setup(
     parent: Res<TextParentEntity>,
     mut msg_problem_changed: MessageWriter<ProblemChanged>,
 ) {
+    commands.spawn((
+        Text::new(""),
+        DespawnOnExit(GameState::InGame),
+        TextFont {
+            font: japanese_font.0.clone().into(),
+            font_size: FontSize::Px(20.0),
+            ..default()
+        },
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+        ProblemIndexDisplay,
+    ));
     let target_text = commands
         .spawn((
-            Text::new(""), DespawnOnExit(GameState::InGame), TargetText,
-                TextFont {
+            Text::new(""),
+            DespawnOnExit(GameState::InGame),
+            TargetText,
+            TextFont {
                 font: japanese_font.0.clone().into(),
                 font_size: FontSize::Px(50.0),
                 ..default()
-            },)
-        )
+            },
+        ))
         .id();
     commands.entity(parent.0).add_child(target_text);
     let target_kana = commands
@@ -622,16 +644,28 @@ fn change_problem(
     typingstate: Res<TypingState>,
     japanese_font: Res<JapaneseFont>,
     mut target: Query<&mut Text, (With<TargetText>, Without<KanaSpan>, Without<InputText>)>,
+    mut problem_index_display: Query<
+        &mut Text,
+        (
+            With<ProblemIndexDisplay>,
+            Without<InputText>,
+            Without<KanaSpan>,
+        ),
+    >,
 ) {
     for _ in msgs.read() {
         if let Ok(mut text) = target.single_mut() {
             *text = Text::new(typingstate.now_odai());
         }
+        if let Ok(mut text) = problem_index_display.single_mut() {
+            *text = Text::new(format!(
+                "{}/{}",
+                typingstate.problem_index + 1,
+                typingstate.problem_count
+            ));
+        }
         commands.entity(target_kana.0).despawn_children();
-        for (i, s) in typingstate.now_odai_kana()
-            .iter()
-            .enumerate()
-        {
+        for (i, s) in typingstate.now_odai_kana().iter().enumerate() {
             let child = commands
                 .spawn((
                     TextSpan::new(s.clone()),
