@@ -11,6 +11,7 @@ impl Plugin for SystemPlugin{
         app:&mut App,
     ){
         app.add_message::<messages::KeyInputResult>();
+        app.add_message::<messages::CountDownSound>();
         app.configure_sets(FixedUpdate,(
             schedule::GameSet::System,
             schedule::GameSet::ViewModel.after(schedule::GameSet::System),
@@ -61,6 +62,7 @@ impl Plugin for SystemPlugin{
         app.add_systems(FixedUpdate,handle_key_input::handle_key_input_endmenu.run_if(in_state(state::GameState::EndMenu)).in_set(schedule::GameSet::System));
         app.add_systems(FixedUpdate,timer::end_kpmdisplay.run_if(in_state(state::InGameState::DisplayKpm)).in_set(schedule::GameSet::System));
         app.add_systems(FixedUpdate,sounds::handle_key_input_sound.run_if(in_state(state::InGameState::Typing)).in_set(schedule::GameSet::System));
+        app.add_systems(FixedUpdate,sounds::handle_countdown_sound.run_if(in_state(state::InGameState::CountDown)).in_set(schedule::GameSet::System));
         app.add_systems(FixedUpdate,build_viewmodel::build_countdown_viewmodel.run_if(in_state(state::InGameState::CountDown)).in_set(schedule::GameSet::ViewModel));
         app.add_systems(FixedUpdate,build_viewmodel::update_problem_viewmodel.run_if(in_state(state::InGameState::Typing)).in_set(schedule::GameSet::ViewModel));
         app.add_systems(FixedUpdate,(countdown::finish_countdown,countdown::reset_countdown_timer).run_if(in_state(state::InGameState::CountDown)).in_set(schedule::GameSet::System));
