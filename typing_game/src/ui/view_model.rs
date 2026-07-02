@@ -19,3 +19,7 @@ pub struct KpmViewModel{
 pub struct EndMenuViewModel{
     pub kpm:String,
 }
+#[derive(Resource)]
+pub struct CountDownViewModel{
+    pub count_down:u8,
+}

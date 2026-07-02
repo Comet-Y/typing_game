@@ -11,24 +11,33 @@ pub struct Timers{
     pub wait:Timer,
     pub game_timer:GameTimer
 }
+#[derive(Resource)]
+pub struct CountDownTimer(pub Timer);
 
 pub fn setup_timer(
     mut commands:Commands,
 ){
-    let timers=Timers{
+    let mut timers=Timers{
         wait:Timer::from_seconds(1.0,TimerMode::Once),
         game_timer:GameTimer{
             stopwatch:Stopwatch::new(),
             prev:0.0
         }
     };
+    timers.wait.pause();
+    timers.game_timer.stopwatch.pause();
+    let mut count_down=CountDownTimer(Timer::from_seconds(1.0,TimerMode::Once));
+    count_down.0.pause();
+    commands.insert_resource(count_down);
     commands.insert_resource(timers);
 }
 
 pub fn tick_timers(
     mut timers:ResMut<Timers>,
+    mut count_down:ResMut<CountDownTimer>,
     time:Res<Time>,
 ){
+    count_down.0.tick(time.delta()); 
     timers.wait.tick(time.delta());
     timers.game_timer.stopwatch.tick(time.delta());
 }
@@ -42,7 +51,7 @@ pub fn problem_elapsed(
 }
 
 pub fn end_kpmdisplay(
-    mut timers:ResMut<Timers>,
+    timers:Res<Timers>,
     mut next_gamestate:ResMut<NextState<state::GameState>>,
     mut next_ingamestate:ResMut<NextState<state::InGameState>>,
     typing_state:Res<session::TypingState>
@@ -52,8 +61,19 @@ pub fn end_kpmdisplay(
             next_gamestate.set(state::GameState::EndMenu);
         }
         else{
-            timers.game_timer.stopwatch.unpause();
             next_ingamestate.set(state::InGameState::Typing);
         }
     }
+}
+
+
+pub fn start_countdown(
+    mut count_down:ResMut<CountDownTimer>
+){
+        count_down.0.unpause();
+}
+pub fn start_stopwatch(
+        mut timers:ResMut<Timers>,
+){
+            timers.game_timer.stopwatch.unpause();
 }

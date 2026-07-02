@@ -2,12 +2,21 @@ use bevy::prelude::*;
 use crate::typing::session;
 use crate::ui::view_model;
 use crate::system::timer;
+use crate::system::countdown;
 pub fn build_ingame_viewmodel(
     typing_state:Res<session::TypingState>,
     mut ingame_viewmodel:ResMut<view_model::InGameViewModel>
 ){
-    ingame_viewmodel.problem_index=typing_state.progress.problem_index;
+    ingame_viewmodel.problem_index=typing_state.progress.problem_index+1;
     ingame_viewmodel.problem_count=typing_state.progress.problem_count;
+}
+
+
+pub fn build_countdown_viewmodel(
+    mut countdown_viewmodel:ResMut<view_model::CountDownViewModel>,
+    count_down_remain:ResMut<countdown::CountDownRemain>
+){
+        countdown_viewmodel.count_down=count_down_remain.0;
 }
 
 pub fn build_problem_viewmodel(
@@ -42,7 +51,7 @@ pub fn update_ingame_viewmodel(
     typing_state:Res<session::TypingState>,
     mut ingame_viewmodel:ResMut<view_model::InGameViewModel>
 ){
-    ingame_viewmodel.problem_index=typing_state.progress.problem_index;
+    ingame_viewmodel.problem_index=typing_state.progress.problem_index+1;
 }
 
 pub fn update_problem_viewmodel(

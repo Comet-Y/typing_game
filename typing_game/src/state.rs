@@ -13,6 +13,7 @@ pub enum GameState {
 #[source(GameState=GameState::InGame)]
 pub enum InGameState{
     #[default]
+    CountDown,
     Typing,
     DisplayKpm,
 }
