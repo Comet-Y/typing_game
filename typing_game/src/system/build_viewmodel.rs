@@ -27,7 +27,7 @@ pub fn build_kpm_viewmodel(
     mut kpm_viewmodel:ResMut<view_model::KpmViewModel>,
     timer:ResMut<timer::Timers>
 ){
-    kpm_viewmodel.kpm=60.0*typing_state.kpm_data.last_inputbuf_len as f32/timer::problem_elapsed(timer);
+    kpm_viewmodel.kpm=kpm_kirisute(60.0*typing_state.kpm_data.last_inputbuf_len as f32/timer::problem_elapsed(timer));
 }
 
 pub fn build_endmenu_viewmodel(
@@ -35,7 +35,7 @@ pub fn build_endmenu_viewmodel(
     mut endmenu_viewmodel:ResMut<view_model::EndMenuViewModel>,
     timer:Res<timer::Timers>
 ){
-    endmenu_viewmodel.kpm=60.0*typing_state.kpm_data.typed_sum as f32/timer.game_timer.stopwatch.elapsed_secs();
+    endmenu_viewmodel.kpm=kpm_kirisute(60.0*typing_state.kpm_data.typed_sum as f32/timer.game_timer.stopwatch.elapsed_secs());
 }
 
 pub fn update_ingame_viewmodel(
@@ -51,4 +51,10 @@ pub fn update_problem_viewmodel(
 ){
     problem_viewmodel.kana_index=typing_state.current_problem_session.kana_index;
     problem_viewmodel.input=typing_state.current_problem_session.inputbuf.clone();
+}
+
+fn kpm_kirisute(
+    kpm:f32
+)->String{
+    format!("{:.1}",kpm)
 }

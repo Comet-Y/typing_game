@@ -24,10 +24,10 @@ impl Plugin for UiPlugin{
             input:String::new(),
         });
         app.insert_resource(view_model::KpmViewModel{
-            kpm:0.0,
+            kpm:String::new(),
         });
         app.insert_resource(view_model::EndMenuViewModel{
-            kpm:0.0,
+            kpm:String::new(),
         });
     }
 }

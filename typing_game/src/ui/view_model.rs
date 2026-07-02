@@ -13,9 +13,9 @@ pub struct ProblemViewModel{
 }
 #[derive(Resource)]
 pub struct KpmViewModel{
-  pub kpm:f32,
+  pub kpm:String,
 }
 #[derive(Resource)]
 pub struct EndMenuViewModel{
-    pub kpm:f32,
+    pub kpm:String,
 }
